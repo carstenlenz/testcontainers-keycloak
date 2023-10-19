@@ -51,6 +51,7 @@ import static java.util.Objects.requireNonNull;
 /**
  * @author Niko Köbler, https://www.n-k.de, @dasniko
  */
+@SuppressWarnings("resource")
 public abstract class ExtendableKeycloakContainer<SELF extends ExtendableKeycloakContainer<SELF>> extends GenericContainer<SELF> {
 
     public static final String MASTER_REALM = "master";
@@ -100,7 +101,7 @@ public abstract class ExtendableKeycloakContainer<SELF extends ExtendableKeycloa
 
     private Duration startupTimeout = DEFAULT_STARTUP_TIMEOUT;
 
-    private String providerClassLocation;
+    private String[] providerClassLocations;
     private List<File> providerLibsLocations;
 
     /**
@@ -170,8 +171,8 @@ public abstract class ExtendableKeycloakContainer<SELF extends ExtendableKeycloa
             commandParts.add("--https-client-auth=" + this.httpsClientAuth);
         }
 
-        if (providerClassLocation != null) {
-            createKeycloakExtensionProvider(providerClassLocation);
+        if (providerClassLocations != null) {
+            createKeycloakExtensionProvider(providerClassLocations);
         }
 
         if (providerLibsLocations != null) {
@@ -230,40 +231,44 @@ public abstract class ExtendableKeycloakContainer<SELF extends ExtendableKeycloa
     /**
      * Maps the provided {@code extensionClassFolder} as an exploded providers.jar to the Keycloak providers folder.
      *
-     * @param extensionClassFolder a path relative to the current classpath root.
+     * @param extensionClassFolders paths relative to the current classpath root.
      */
-    public void createKeycloakExtensionProvider(String extensionClassFolder) {
-        createKeycloakExtensionDeployment(DEFAULT_KEYCLOAK_PROVIDERS_LOCATION, DEFAULT_KEYCLOAK_PROVIDERS_NAME, extensionClassFolder);
+    public void createKeycloakExtensionProvider(String... extensionClassFolders) {
+        createKeycloakExtensionDeployment(DEFAULT_KEYCLOAK_PROVIDERS_LOCATION, DEFAULT_KEYCLOAK_PROVIDERS_NAME, extensionClassFolders);
     }
 
     /**
      * Maps the provided {@code extensionClassFolder} as an exploded extension.jar to the {@code deploymentLocation}.
      *
-     * @param deploymentLocation   the target deployments location of the Keycloak server.
-     * @param extensionName        the name suffix of the created extension.
-     * @param extensionClassFolder a path relative to the current classpath root.
+     * @param deploymentLocation    the target deployments location of the Keycloak server.
+     * @param extensionName         the name suffix of the created extension.
+     * @param extensionClassFolders paths relative to the current classpath root.
      */
-    protected void createKeycloakExtensionDeployment(String deploymentLocation, String extensionName, String extensionClassFolder) {
+    protected void createKeycloakExtensionDeployment(String deploymentLocation, String extensionName, String... extensionClassFolders) {
 
         requireNonNull(deploymentLocation, "deploymentLocation must not be null");
         requireNonNull(extensionName, "extensionName must not be null");
-        requireNonNull(extensionClassFolder, "extensionClassFolder must not be null");
+        requireNonNull(extensionClassFolders, "extensionClassFolders must not be null");
 
-        String classesLocation = resolveExtensionClassLocation(extensionClassFolder);
-        if (new File(classesLocation).exists()) {
-            final File file;
-            try {
-                file = Files.createTempFile("keycloak", ".jar").toFile();
-                file.setReadable(true, false);
-                file.deleteOnExit();
-                ShrinkWrap.create(JavaArchive.class, extensionName)
-                    .as(ExplodedImporter.class)
-                    .importDirectory(classesLocation)
-                    .as(ZipExporter.class)
-                    .exportTo(file, true);
-                withCopyFileToContainer(MountableFile.forHostPath(file.getAbsolutePath()), deploymentLocation + "/" + extensionName);
-            } catch (IOException e) {
-                throw new UncheckedIOException(e);
+        int n = 0;
+        for (String extensionClassFolder : extensionClassFolders) {
+            n++;
+            String classesLocation = resolveExtensionClassLocation(extensionClassFolder);
+            if (new File(classesLocation).exists()) {
+                final File file;
+                try {
+                    file = Files.createTempFile("keycloak" + n, ".jar").toFile();
+                    file.setReadable(true, false);
+                    file.deleteOnExit();
+                    ShrinkWrap.create(JavaArchive.class, extensionName)
+                        .as(ExplodedImporter.class)
+                        .importDirectory(classesLocation)
+                        .as(ZipExporter.class)
+                        .exportTo(file, true);
+                    withCopyFileToContainer(MountableFile.forHostPath(file.getAbsolutePath()), deploymentLocation + "/" + n + "_" + extensionName);
+                } catch (IOException e) {
+                    throw new UncheckedIOException(e);
+                }
             }
         }
 
@@ -305,10 +310,10 @@ public abstract class ExtendableKeycloakContainer<SELF extends ExtendableKeycloa
     /**
      * Exposes the given classes location as an exploded providers.jar.
      *
-     * @param classesLocation a classes location relative to the current classpath root.
+     * @param classesLocations classes locations relative to the current classpath root.
      */
-    public SELF withProviderClassesFrom(String classesLocation) {
-        this.providerClassLocation = classesLocation;
+    public SELF withProviderClassesFrom(String... classesLocations) {
+        this.providerClassLocations = classesLocations;
         return self();
     }
 
@@ -464,7 +469,7 @@ public abstract class ExtendableKeycloakContainer<SELF extends ExtendableKeycloa
      * Get the mapped port for remote debugging. Should only be used if debugging has been enabled.
      * @return the mapped port or <code>-1</code> if debugging has not been configured
      * @see #withDebug()
-     * @see #withDebugFixedPort(int, boolean) 
+     * @see #withDebugFixedPort(int, boolean)
      */
     public int getDebugPort() {
         return debugEnabled ? getMappedPort(KEYCLOAK_PORT_DEBUG) : -1;
